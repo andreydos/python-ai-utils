@@ -1,149 +1,59 @@
+"""
+Demo script showing the python-ai-utils library in action.
+
+This replaces the original prototype code with the new library.
+For more examples, see the examples/ directory.
+"""
+
 import asyncio
-from typing import Any, Coroutine, Callable
-from functools import wraps
-import time
-import aiohttp
+
+from ai_utils import AsyncAPIClient
 
 
-def timeout(seconds: float):
-    """
-    Decorator that adds timeout functionality to async functions.
-    
-    Usage:
-        @timeout(seconds=3)
-        async def my_function():
-            # Your code here
-            pass
-    
-    Args:
-        seconds: Maximum time in seconds the function can run before timing out
-        
-    Raises:
-        asyncio.TimeoutError: If the function exceeds the timeout duration
-    """
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            return await asyncio.wait_for(func(*args, **kwargs), timeout=seconds)
-        return wrapper
-    return decorator
-
-
-def measure_time(func: Callable) -> Callable:
-    """
-    Decorator that measures and prints the execution time of async functions.
-    
-    Usage:
-        @measure_time
-        async def my_function():
-            # Your code here
-            pass
-    """
-    @wraps(func)
-    async def wrapper(*args, **kwargs):
-        start_time = time.perf_counter()
-        func_name = func.__name__
-        # Extract URL from args if available for better logging
-        url_info = f" for {args[0]}" if args and isinstance(args[0], str) and args[0].startswith("http") else ""
-        
-        try:
-            result = await func(*args, **kwargs)
-            elapsed = time.perf_counter() - start_time
-            print(f"⏱️  {func_name}{url_info} completed in {elapsed:.3f} seconds")
-            return result
-        except Exception as e:
-            elapsed = time.perf_counter() - start_time
-            print(f"⏱️  {func_name}{url_info} failed after {elapsed:.3f} seconds: {e}")
-            raise
-    return wrapper
-
-
-def retry(max_retries: int = 3, backoff: str = "exponential"):
-    """
-    Decorator that adds retry functionality to async functions with exponential backoff.
-    
-    Usage:
-        @retry(max_retries=3, backoff="exponential")
-        async def my_function():
-            # Your code here
-            pass
-    
-    Args:
-        max_retries: Maximum number of retry attempts (default: 3)
-        backoff: Backoff strategy - "exponential" (2^attempt) or "linear" (attempt+1)
-        
-    Raises:
-        The last exception if all retries are exhausted
-    """
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            func_name = func.__name__
-            # Extract URL from args if available for better logging
-            url_info = f" for {args[0]}" if args and isinstance(args[0], str) and args[0].startswith("http") else ""
-            
-            for attempt in range(max_retries):
-                if backoff == "exponential":
-                    delay = 2 ** attempt
-                else:  # linear
-                    delay = attempt + 1
-                
-                try:
-                    return await func(*args, **kwargs)
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        # Last attempt failed, raise the exception
-                        raise e
-                    # Log retry attempt
-                    print(f"Retry {attempt + 1} of {max_retries} in {delay} seconds{url_info}: {type(e).__name__}")
-                    await asyncio.sleep(delay)
-                    continue
-        return wrapper
-    return decorator
-
-
-# Helper function with timeout decorator applied to GET request
-@timeout(seconds=10)
-async def get_with_timeout(session: aiohttp.ClientSession, url: str):
-    """Get request with 10-second timeout"""
-    return await session.get(url)
-
-@retry(max_retries=5, backoff="exponential")
-@measure_time
-async def fetch(url: str) -> str:
-    """
-    Fetch URL with retry logic for HTTP errors.
-    Note: @retry decorator handles all exceptions (including HTTP errors and timeouts).
-    """
-    async with aiohttp.ClientSession() as session:
-        response = await get_with_timeout(session, url)
-        async with response:
-            print(f"Response status: {response.status} for {url}")
-            if response.status >= 400:
-                raise aiohttp.ClientResponseError(
-                    request_info=response.request_info,
-                    history=response.history,
-                    status=response.status,
-                    message=f"HTTP {response.status} error for {url}"
-                )
-            return await response.text()
-
-    
-
-@measure_time
 async def main():
-    urls: list[str] = [
-        "https://postman-echo.com/delay/7",
-    ]
+    print("=" * 70)
+    print("python-ai-utils - Production-Ready Async API Client")
+    print("=" * 70)
+    print()
+    
+    # Create client with all features enabled
+    async with AsyncAPIClient(
+        base_url="https://httpbin.org",
+        timeout=10.0,
+        max_retries=3,
+        rate_limit=5,  # 5 requests per second
+        enable_logging=True
+    ) as client:
+        
+        print("🔹 Making test requests...\n")
+        
+        # Test 1: Simple GET
+        print("1️⃣  GET /get")
+        response = await client.get("/get", params={"test": "value"})
+        print(f"   ✅ Success! Args: {response.get('args')}\n")
+        
+        # Test 2: POST with JSON
+        print("2️⃣  POST /post")
+        response = await client.post("/post", json={"message": "Hello!"})
+        print(f"   ✅ Success! Sent: {response.get('json')}\n")
+        
+        # Test 3: Concurrent requests with rate limiting
+        print("3️⃣  Making 5 concurrent requests (rate limited to 5/s)...")
+        tasks = [client.get(f"/get?id={i}") for i in range(5)]
+        results = await asyncio.gather(*tasks)
+        print(f"   ✅ All {len(results)} requests completed!\n")
+        
+        # Test 4: Error handling (will retry and then fail)
+        print("4️⃣  Testing error handling with /status/500...")
+        try:
+            await client.get("/status/500")
+        except Exception as e:
+            print(f"   ✅ Handled gracefully: {type(e).__name__}\n")
+    
+    print("=" * 70)
+    print("✨ Demo complete! Check examples/ for more use cases.")
+    print("=" * 70)
 
-    tasks: list[Coroutine[Any, Any, str]] = [fetch(url) for url in urls]
-    # Handle errors for each request
-    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    for url, result in zip(urls, results):
-        if isinstance(result, Exception):
-            print(f"Error for {url}: {result}")
-        else:
-            print(f"Response length for {url}: {len(result)}")
-
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
